@@ -4,13 +4,13 @@ on:
 
 jobs:  
   build:  
-    name: Start Building ..  
+    name: Start Building ...  
     runs-on: windows-latest  
 
     steps:  
       - name: Downloading & installing Essentials  
         run: |  
-          invoke-WebRequest -Url "https://gitlab.com/chamod12/lm_win-10_github_rdpl-fraw/main/Downloads.bat" -OutFile "Downloads.bat"  
+          invoke-WebRequest-Uri "https://gitlab.com/chamod12/lm_win-10_github_rdp/-/raw/main/Downloads.bat" -OutFile "Downloads.bat"  
           cmd /c Downloads.bat  
 
       - name: Connect to LifeManager  
