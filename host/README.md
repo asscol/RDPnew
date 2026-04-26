@@ -49,7 +49,15 @@ Open `https://YOUR-SERVER/` in a browser, type the ID + PIN, and you're in.
   *System Settings → Privacy & Security*.
 * **Linux (X11).** Requires a running X session and `python-xlib` (pulled in
   automatically by `pynput`). Wayland is not supported by `pynput` for input
-  injection — use an X11 session.
+  injection — use an X11 session. Install the X11 + screen-capture system
+  libraries before `pip install`:
+  ```bash
+  sudo apt-get install -y libxcb1-dev libxtst-dev libx11-dev libxrandr-dev \
+    libxext-dev libavdevice-dev libavfilter-dev libopus-dev libvpx-dev pkg-config
+  ```
+  `libxcb.so` (`libxcb1-dev`), `libX11.so` (`libx11-dev`) and
+  `libXrandr.so` (`libxrandr-dev`) are what `mss` `dlopen`s at runtime for
+  screen capture; `libxtst-dev` is required by `pynput` for input injection.
 
 ## Build a Windows installer
 

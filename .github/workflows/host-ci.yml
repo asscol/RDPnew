@@ -24,7 +24,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libavdevice-dev libavfilter-dev libopus-dev libvpx-dev pkg-config \
-            libxtst-dev libx11-dev
+            libxtst-dev libx11-dev libxcb1-dev libxrandr-dev libxext-dev
       - name: Install host package
         working-directory: host
         run: |
