@@ -1,0 +1,37 @@
+# Production deployment of the RemoteDesk server.
+#
+# Bring up:   sudo docker compose up -d
+# Tail logs:  sudo docker compose logs -f
+# Update:     git pull && sudo docker compose pull && sudo docker compose up -d --build
+#
+# Required environment (e.g. /etc/remotedesk.env, sourced by the unit file):
+#   PUBLIC_HOST   public DNS name of this VPS (used by coturn)
+#   TURN_SECRET   long random string (>=32 chars) — must match server config
+services:
+  signaling:
+    build:
+      context: ../..
+      dockerfile: server/Dockerfile
+    image: remotedesk/signaling:latest
+    container_name: remotedesk-signaling
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - STUN_URLS=stun:stun.l.google.com:19302,stun:${PUBLIC_HOST}:3478
+      - TURN_HOST=${PUBLIC_HOST}
+      - TURN_PORT=3478
+      - TURN_SECRET=${TURN_SECRET}
+      - TURN_TTL=3600
+    ports:
+      - "8080:8080"
+
+  coturn:
+    image: coturn/coturn:4.6.2
+    container_name: remotedesk-coturn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./coturn.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    environment:
+      - TURN_SECRET=${TURN_SECRET}

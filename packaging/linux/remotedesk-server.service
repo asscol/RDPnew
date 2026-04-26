@@ -1,0 +1,17 @@
+[Unit]
+Description=RemoteDesk signaling + TURN relay (docker-compose)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/opt/remotedesk
+EnvironmentFile=/etc/remotedesk.env
+ExecStart=/usr/bin/docker compose -f /opt/remotedesk/packaging/linux/docker-compose.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f /opt/remotedesk/packaging/linux/docker-compose.yml down
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
