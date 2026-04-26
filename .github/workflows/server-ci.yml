@@ -1,0 +1,40 @@
+name: Server CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "client/**"
+      - ".github/workflows/server-ci.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - "client/**"
+      - ".github/workflows/server-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install
+        working-directory: server
+        run: npm install --no-audit --no-fund
+      - name: Lint
+        working-directory: server
+        run: npm run lint
+      - name: Tests
+        working-directory: server
+        run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server image
+        run: docker build -f server/Dockerfile -t remotedesk/signaling:ci .

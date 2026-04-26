@@ -1,0 +1,67 @@
+name: Build Windows host installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "host/**"
+      - "packaging/windows/**"
+      - ".github/workflows/build-host-windows.yml"
+  pull_request:
+    paths:
+      - "host/**"
+      - "packaging/windows/**"
+      - ".github/workflows/build-host-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install host dependencies
+        working-directory: host
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint
+        working-directory: host
+        run: ruff check remotedesk
+
+      - name: Tests
+        working-directory: host
+        run: python -m pytest tests -q
+
+      - name: PyInstaller
+        working-directory: host
+        run: pyinstaller --noconfirm remotedesk-host.spec
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build installer
+        working-directory: packaging/windows
+        run: |
+          $env:Path += ";C:\Program Files (x86)\NSIS"
+          makensis installer.nsi
+
+      - name: Upload host exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: remotedesk-host-exe
+          path: host/dist/remotedesk-host.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: remotedesk-host-windows-setup
+          path: packaging/windows/RemoteDeskHost-Setup-*.exe
