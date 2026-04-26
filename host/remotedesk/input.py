@@ -9,65 +9,74 @@ Message shapes (all ``kind`` values):
   * ``mouse-down`` / ``mouse-up``  ``{x, y, button}`` (button: 0=left,1=middle,2=right)
   * ``wheel``      ``{dx, dy}``  (pixels; positive dy = scroll up in our convention)
   * ``key-down`` / ``key-up``  ``{key, code}``  (DOM ``KeyboardEvent`` fields)
+
+NOTE: ``pynput`` opens an X11 connection at import time on Linux and crashes
+in headless environments (CI without Xvfb, sandboxed test runners, etc).
+We therefore import it *lazily* — only when the dispatcher is actually
+constructed in enabled mode. This keeps ``import remotedesk.input`` safe
+everywhere, including the unit-test environment.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pynput.keyboard import Controller as KeyboardController
-from pynput.keyboard import Key, KeyCode
-from pynput.mouse import Button
-from pynput.mouse import Controller as MouseController
+if TYPE_CHECKING:  # pragma: no cover - hints only
+    from pynput.keyboard import Key, KeyCode
 
 logger = logging.getLogger(__name__)
 
 
-# Mapping for non-printable DOM `key` values to pynput `Key` members.
-_DOM_KEY_MAP: dict[str, Key] = {
-    "Enter": Key.enter,
-    "Escape": Key.esc,
-    "Backspace": Key.backspace,
-    "Tab": Key.tab,
-    " ": Key.space,
-    "Shift": Key.shift,
-    "Control": Key.ctrl,
-    "Alt": Key.alt,
-    "Meta": Key.cmd,
-    "OS": Key.cmd,
-    "ArrowUp": Key.up,
-    "ArrowDown": Key.down,
-    "ArrowLeft": Key.left,
-    "ArrowRight": Key.right,
-    "Home": Key.home,
-    "End": Key.end,
-    "PageUp": Key.page_up,
-    "PageDown": Key.page_down,
-    "Insert": Key.insert,
-    "Delete": Key.delete,
-    "CapsLock": Key.caps_lock,
-    "PrintScreen": Key.print_screen,
-    "Pause": Key.pause,
-    "ContextMenu": Key.menu,
+# DOM-key name -> attribute name on `pynput.keyboard.Key`. Resolved lazily
+# inside `_to_pynput_key` so importing this module never touches pynput.
+_DOM_KEY_NAMES: dict[str, str] = {
+    "Enter": "enter",
+    "Escape": "esc",
+    "Backspace": "backspace",
+    "Tab": "tab",
+    " ": "space",
+    "Shift": "shift",
+    "Control": "ctrl",
+    "Alt": "alt",
+    "Meta": "cmd",
+    "OS": "cmd",
+    "ArrowUp": "up",
+    "ArrowDown": "down",
+    "ArrowLeft": "left",
+    "ArrowRight": "right",
+    "Home": "home",
+    "End": "end",
+    "PageUp": "page_up",
+    "PageDown": "page_down",
+    "Insert": "insert",
+    "Delete": "delete",
+    "CapsLock": "caps_lock",
+    "PrintScreen": "print_screen",
+    "Pause": "pause",
+    "ContextMenu": "menu",
 }
-for i in range(1, 25):
-    fkey = getattr(Key, f"f{i}", None)
-    if fkey is not None:
-        _DOM_KEY_MAP[f"F{i}"] = fkey
+for _i in range(1, 25):
+    _DOM_KEY_NAMES[f"F{_i}"] = f"f{_i}"
 
-_BUTTON_MAP = {0: Button.left, 1: Button.middle, 2: Button.right}
+
+def _button_map() -> dict[int, Any]:
+    from pynput.mouse import Button
+
+    return {0: Button.left, 1: Button.middle, 2: Button.right}
 
 
 def _to_pynput_key(key: str, code: str) -> Key | KeyCode | str | None:
     if not key:
         return None
-    if key in _DOM_KEY_MAP:
-        return _DOM_KEY_MAP[key]
+    name = _DOM_KEY_NAMES.get(key)
+    if name is not None:
+        from pynput.keyboard import Key
+
+        return getattr(Key, name, None)
     if len(key) == 1:
         return key
-    # Unknown special key.
     logger.debug("unknown key: %r (code=%r)", key, code)
     return None
 
@@ -87,12 +96,17 @@ class InputDispatcher:
     def __init__(self, frame_size: tuple[int, int] | None, enabled: bool = True) -> None:
         self._frame_size = frame_size
         self._enabled = enabled
-        self._mouse: MouseController | None = None
-        self._keyboard: KeyboardController | None = None
+        self._mouse: Any = None
+        self._keyboard: Any = None
+        self._buttons: dict[int, Any] = {}
         if enabled:
             try:
+                from pynput.keyboard import Controller as KeyboardController
+                from pynput.mouse import Controller as MouseController
+
                 self._mouse = MouseController()
                 self._keyboard = KeyboardController()
+                self._buttons = _button_map()
             except Exception:
                 logger.exception("failed to init pynput controllers; input disabled")
                 self._enabled = False
@@ -147,7 +161,7 @@ class InputDispatcher:
         pos = self._abs_xy(float(msg.get("x", 0)), float(msg.get("y", 0)))
         if pos:
             self._mouse.position = pos
-        btn = _BUTTON_MAP.get(int(msg.get("button", 0)), Button.left)
+        btn = self._buttons.get(int(msg.get("button", 0))) or self._buttons[0]
         if press:
             self._mouse.press(btn)
         else:
