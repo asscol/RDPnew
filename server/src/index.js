@@ -5,27 +5,30 @@
 //   * Maintain a registry of hosts keyed by a 9-digit connection ID.
 //   * Verify that the client supplies the matching one-time PIN.
 //   * Relay SDP offers/answers and ICE candidates between host and client.
-//   * Expose REST endpoints for ICE-server config (STUN + time-limited TURN
-//     credentials compatible with coturn `use-auth-secret`).
+//   * Persist users, hosts, sessions, and audit log in SQLite.
+//   * Expose REST endpoints for auth, host management, admin, and ICE
+//     servers (STUN + time-limited TURN credentials).
 //
 // Wire protocol (JSON over WebSocket, one message per frame):
 //
-//   Host -> server (on connect):
-//     {"type":"register","role":"host","pin":"123456"}
+//   Host (first run, no saved credentials) -> server:
+//     {"type":"register","role":"host","pin":"1234"}
+//   Server -> host:
+//     {"type":"registered","id":"123456789","secret":"<token>"}
+//
+//   Host (subsequent runs) -> server:
+//     {"type":"register","role":"host","pin":"1234","id":"123456789","secret":"<token>"}
 //   Server -> host:
 //     {"type":"registered","id":"123456789"}
+//     {"type":"error","reason":"bad-token"}        (token mismatch)
 //
 //   Client -> server:
-//     {"type":"join","id":"123456789","pin":"123456"}
+//     {"type":"join","id":"123456789","pin":"1234"}
 //   Server -> client:
-//     {"type":"joined"}                          (success)
-//     {"type":"error","reason":"not-found"}      (no such host)
-//     {"type":"error","reason":"bad-pin"}        (PIN mismatch)
-//     {"type":"error","reason":"busy"}           (host already paired)
+//     {"type":"joined"}
+//     {"type":"error","reason":"not-found"|"bad-pin"|"busy"|"offline"}
 //
-//   After pairing, any other message from one peer is forwarded verbatim to
-//   the other peer (offer/answer/candidate/etc).
-
+//   After pairing, any other message is forwarded verbatim to the peer.
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
@@ -33,7 +36,14 @@ import url from "node:url";
 import crypto from "node:crypto";
 import { WebSocketServer } from "ws";
 
-import { generateConnectionId } from "./ids.js";
+import { initDb, ensureBootstrapAdmin } from "./db.js";
+import { hashPassword } from "./auth.js";
+import {
+  registerNewHost,
+  authenticateHost,
+} from "./hosts.js";
+import { audit } from "./admin.js";
+import { handleApi } from "./routes.js";
 import { buildIceServers } from "./turn.js";
 
 const __filename = url.fileURLToPath(import.meta.url);
@@ -49,10 +59,10 @@ const STUN_URLS = (process.env.STUN_URLS || "stun:stun.l.google.com:19302")
   .map((s) => s.trim())
   .filter(Boolean);
 
-const TURN_HOST = process.env.TURN_HOST || ""; // e.g. "turn.example.com"
+const TURN_HOST = process.env.TURN_HOST || "";
 const TURN_PORT = Number(process.env.TURN_PORT || 3478);
-const TURN_SECRET = process.env.TURN_SECRET || ""; // shared with coturn use-auth-secret
-const TURN_TTL = Number(process.env.TURN_TTL || 3600); // seconds
+const TURN_SECRET = process.env.TURN_SECRET || "";
+const TURN_TTL = Number(process.env.TURN_TTL || 3600);
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -64,8 +74,11 @@ const MIME = {
   ".json": "application/json; charset=utf-8",
 };
 
+initDb();
+await maybeBootstrapAdmin();
+
 /** @type {Map<string, {ws: import('ws').WebSocket, pin: string, peer: import('ws').WebSocket | null}>} */
-const hosts = new Map();
+const liveHosts = new Map();
 
 function safeJoin(base, target) {
   const resolved = path.resolve(base, "." + target);
@@ -98,30 +111,32 @@ function serveStatic(req, res) {
   });
 }
 
-function handleRest(req, res) {
-  if (req.url === "/api/ice-servers") {
-    const ice = buildIceServers({
-      stunUrls: STUN_URLS,
-      turnHost: TURN_HOST,
-      turnPort: TURN_PORT,
-      turnSecret: TURN_SECRET,
-      ttlSeconds: TURN_TTL,
-    });
-    res.writeHead(200, {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-cache",
-    });
-    res.end(JSON.stringify({ iceServers: ice }));
-    return true;
-  }
-  return false;
+function handleIceServers(req, res) {
+  const ice = buildIceServers({
+    stunUrls: STUN_URLS,
+    turnHost: TURN_HOST,
+    turnPort: TURN_PORT,
+    turnSecret: TURN_SECRET,
+    ttlSeconds: TURN_TTL,
+  });
+  res.writeHead(200, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-cache",
+  });
+  res.end(JSON.stringify({ iceServers: ice }));
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
+  if (req.url === "/api/ice-servers") {
+    handleIceServers(req, res);
+    return;
+  }
   if (req.url && req.url.startsWith("/api/")) {
-    if (handleRest(req, res)) return;
-    res.writeHead(404);
-    res.end("not found");
+    const handled = await handleApi(req, res);
+    if (!handled) {
+      res.writeHead(404);
+      res.end("not found");
+    }
     return;
   }
   serveStatic(req, res);
@@ -151,7 +166,6 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // Initial handshake.
     if (state.role === null) {
       if (msg.type === "register" && msg.role === "host") {
         const pin = String(msg.pin || "").trim();
@@ -159,28 +173,49 @@ wss.on("connection", (ws) => {
           sendError(ws, "bad-pin-format");
           return;
         }
-        let id;
-        do {
-          id = generateConnectionId();
-        } while (hosts.has(id));
-        hosts.set(id, { ws, pin, peer: null });
+        // Re-register existing host: id+secret provided.
+        if (msg.id && msg.secret) {
+          const auth = authenticateHost({ id: String(msg.id), token: String(msg.secret) });
+          if (auth.error) {
+            sendError(ws, auth.error);
+            return;
+          }
+          if (liveHosts.has(auth.host.id)) {
+            // Replace previous live socket; old one will be closed below.
+            const prev = liveHosts.get(auth.host.id);
+            if (prev.peer) send(prev.peer, { type: "peer-left" });
+            try { prev.ws.close(4001, "replaced"); } catch { /* ignore */ }
+          }
+          liveHosts.set(auth.host.id, { ws, pin, peer: null });
+          state.role = "host";
+          state.id = auth.host.id;
+          send(ws, { type: "registered", id: auth.host.id });
+          return;
+        }
+        // First-time registration: allocate a new id+secret.
+        const { id, token } = registerNewHost({});
+        liveHosts.set(id, { ws, pin, peer: null });
         state.role = "host";
         state.id = id;
-        send(ws, { type: "registered", id });
+        send(ws, { type: "registered", id, secret: token });
+        audit({ action: "host-register", target: `host:${id}` });
         return;
       }
       if (msg.type === "join" && typeof msg.id === "string") {
         const id = msg.id.trim();
         const pin = String(msg.pin || "").trim();
-        const entry = hosts.get(id);
+        const entry = liveHosts.get(id);
         if (!entry) {
-          sendError(ws, "not-found");
+          sendError(ws, "offline");
           return;
         }
-        if (!crypto.timingSafeEqual(
-          Buffer.from(entry.pin.padEnd(12, "\0")),
-          Buffer.from(pin.padEnd(12, "\0")),
-        )) {
+        if (
+          entry.pin.length !== pin.length ||
+          !crypto.timingSafeEqual(
+            Buffer.from(entry.pin.padEnd(12, "\0")),
+            Buffer.from(pin.padEnd(12, "\0")),
+          )
+        ) {
           sendError(ws, "bad-pin");
           return;
         }
@@ -199,8 +234,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // Forwarding stage.
-    const entry = state.id ? hosts.get(state.id) : null;
+    const entry = state.id ? liveHosts.get(state.id) : null;
     if (!entry) {
       sendError(ws, "no-session");
       return;
@@ -215,13 +249,13 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     if (state.role === "host" && state.id) {
-      const entry = hosts.get(state.id);
-      if (entry) {
+      const entry = liveHosts.get(state.id);
+      if (entry && entry.ws === ws) {
         if (entry.peer) send(entry.peer, { type: "peer-left" });
-        hosts.delete(state.id);
+        liveHosts.delete(state.id);
       }
     } else if (state.role === "client" && state.id) {
-      const entry = hosts.get(state.id);
+      const entry = liveHosts.get(state.id);
       if (entry && entry.peer === ws) {
         entry.peer = null;
         send(entry.ws, { type: "peer-left" });
@@ -238,7 +272,6 @@ server.listen(PORT, () => {
   console.log(`[remotedesk-server] listening on :${PORT} (public=${PUBLIC_DIR})`);
 });
 
-// Graceful shutdown.
 for (const sig of ["SIGINT", "SIGTERM"]) {
   process.on(sig, () => {
     console.log(`[remotedesk-server] ${sig}, shutting down`);
@@ -246,4 +279,25 @@ for (const sig of ["SIGINT", "SIGTERM"]) {
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 5000).unref();
   });
+}
+
+async function maybeBootstrapAdmin() {
+  const email = process.env.ADMIN_EMAIL;
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password) return;
+  const passwordHash = await hashPassword(password);
+  const created = ensureBootstrapAdmin({ email: email.toLowerCase(), passwordHash });
+  if (created) {
+    console.log(`[remotedesk-server] bootstrap admin created: ${email}`);
+  }
+}
+
+// Force-disconnect a live host (used by the admin endpoint via in-process call).
+export function forceDisconnectHost(id) {
+  const entry = liveHosts.get(id);
+  if (!entry) return false;
+  if (entry.peer) send(entry.peer, { type: "peer-left" });
+  try { entry.ws.close(4002, "admin-disconnect"); } catch { /* ignore */ }
+  liveHosts.delete(id);
+  return true;
 }

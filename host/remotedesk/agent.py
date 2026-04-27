@@ -12,6 +12,7 @@ from urllib.parse import urlparse, urlunparse
 import websockets
 from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 
+from .identity import HostIdentity, load_identity, save_identity
 from .input import InputDispatcher
 from .screen import ScreenTrack
 
@@ -164,19 +165,42 @@ async def run_agent(args: argparse.Namespace) -> int:
     if fetched and not args.ice_server:
         ice_servers = fetched
 
+    identity = load_identity()
     backoff = 1.0
     while True:
         try:
             async with websockets.connect(args.server, max_size=4 * 1024 * 1024) as ws:
                 backoff = 1.0
-                await _ws_send(ws, {"type": "register", "role": "host", "pin": args.pin})
+                register_msg: dict = {
+                    "type": "register",
+                    "role": "host",
+                    "pin": args.pin,
+                }
+                if identity is not None:
+                    register_msg["id"] = identity.id
+                    register_msg["secret"] = identity.secret
+                await _ws_send(ws, register_msg)
                 raw = await ws.recv()
                 msg = json.loads(raw)
                 if msg.get("type") != "registered":
+                    reason = msg.get("reason")
+                    if reason in {"not-found", "bad-token"} and identity is not None:
+                        logger.warning(
+                            "saved identity rejected (%s); requesting a new one",
+                            reason,
+                        )
+                        identity = None
+                        continue
                     logger.error("registration failed: %r", msg)
                     return 1
 
                 conn_id = msg.get("id", "?")
+                if identity is None:
+                    secret = msg.get("secret")
+                    if secret:
+                        identity = HostIdentity(id=conn_id, secret=secret)
+                        save_identity(identity)
+                        logger.info("saved persistent host identity")
                 _print_banner(conn_id, args.pin)
 
                 # Wait for clients in a loop. After each client leaves, we

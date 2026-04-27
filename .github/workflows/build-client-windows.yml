@@ -1,0 +1,39 @@
+name: Build Windows desktop client
+
+on:
+  push:
+    paths:
+      - "client/desktop/**"
+      - ".github/workflows/build-client-windows.yml"
+  pull_request:
+    paths:
+      - "client/desktop/**"
+      - ".github/workflows/build-client-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build NSIS installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        working-directory: client/desktop
+        run: npm install --no-audit --no-fund
+      - name: Lint
+        working-directory: client/desktop
+        run: npx eslint .
+      - name: Build NSIS .exe
+        working-directory: client/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --x64 --publish never
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: remotedesk-client-windows-setup
+          path: client/desktop/dist/RemoteDeskClient-Setup-*.exe
+          if-no-files-found: error

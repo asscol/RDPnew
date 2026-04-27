@@ -60,3 +60,9 @@ release/
 # Logs
 *.log
 logs/
+
+# SQLite (server data dir is created at runtime)
+server/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

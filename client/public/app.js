@@ -1,14 +1,12 @@
 // RemoteDesk web client.
 //
-// Flow:
-//   1. User enters Connection ID + PIN, clicks Connect.
-//   2. We GET /api/ice-servers to discover STUN/TURN servers.
-//   3. Open WebSocket to /ws, send {type:"join", id, pin}.
-//   4. On {type:"joined"}, create RTCPeerConnection. We are the answerer:
-//      the host sends an offer.
-//   5. Display the inbound video track on <video>.
-//   6. Open a DataChannel labelled "input" (host creates it). Forward
-//      mouse/keyboard events as JSON over that channel.
+// Three-area SPA:
+//   * Pairing form (Connection ID + PIN, no auth required)
+//   * Auth pages (sign in / sign up) and "My hosts" / "Admin" once signed in
+//   * Live session (video + input forwarding once paired)
+//
+// Routing is hash-based so the static file server doesn't need to know about
+// it. Auth state is fetched from /api/auth/me on load and on every nav.
 
 const $ = (id) => document.getElementById(id);
 const idInput = $("id");
@@ -17,12 +15,20 @@ const connectBtn = $("connect");
 const disconnectBtn = $("disconnect");
 const fullscreenBtn = $("fullscreen");
 const statusEl = $("status");
-const loginPanel = $("login");
 const sessionPanel = $("session");
 const stage = $("stage");
 const video = $("screen");
 const info = $("info");
 
+const PAGES = {
+  "/": "login",
+  "/login": "page-login",
+  "/signup": "page-signup",
+  "/hosts": "page-hosts",
+  "/admin": "page-admin",
+};
+
+let currentUser = null;
 let ws = null;
 let pc = null;
 let inputChan = null;
@@ -33,9 +39,209 @@ function setStatus(text, cls = "") {
 }
 
 function showSession(show) {
-  loginPanel.classList.toggle("hidden", show);
   sessionPanel.classList.toggle("hidden", !show);
+  for (const id of Object.values(PAGES)) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("hidden", show || pageId(currentRoute()) !== id);
+  }
 }
+
+function currentRoute() {
+  const h = location.hash.replace(/^#/, "") || "/";
+  return PAGES[h] ? h : "/";
+}
+
+function pageId(route) {
+  return PAGES[route] || PAGES["/"];
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    credentials: "same-origin",
+    headers: opts.body ? { "content-type": "application/json" } : {},
+    ...opts,
+  });
+  let body = null;
+  try { body = await r.json(); } catch { /* not json */ }
+  return { ok: r.ok, status: r.status, body };
+}
+
+async function refreshMe() {
+  const r = await api("/api/auth/me");
+  currentUser = r.body && r.body.user ? r.body.user : null;
+  document.querySelectorAll(".auth-only-in").forEach((el) =>
+    el.classList.toggle("hidden", !currentUser),
+  );
+  document.querySelectorAll(".auth-only-out").forEach((el) =>
+    el.classList.toggle("hidden", !!currentUser),
+  );
+  document.querySelectorAll(".admin-only").forEach((el) =>
+    el.classList.toggle("hidden", !(currentUser && currentUser.is_admin)),
+  );
+}
+
+function navigate() {
+  const route = currentRoute();
+  // Block /admin if not admin, /hosts if not signed in.
+  if (route === "/admin" && !(currentUser && currentUser.is_admin)) {
+    location.hash = "#/login";
+    return;
+  }
+  if (route === "/hosts" && !currentUser) {
+    location.hash = "#/login";
+    return;
+  }
+  for (const [r, id] of Object.entries(PAGES)) {
+    document.getElementById(id).classList.toggle("hidden", r !== route);
+  }
+  if (route === "/hosts") loadHosts();
+  if (route === "/admin") loadAdmin();
+}
+
+window.addEventListener("hashchange", navigate);
+
+// ---- auth forms ----
+
+document.getElementById("form-login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") }),
+  });
+  const errEl = document.getElementById("login-error");
+  if (!r.ok) {
+    errEl.textContent = "Sign-in failed: " + (r.body?.error || r.status);
+    errEl.classList.add("error-text");
+    return;
+  }
+  errEl.textContent = "";
+  await refreshMe();
+  location.hash = "#/hosts";
+});
+
+document.getElementById("form-signup").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const r = await api("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email: fd.get("email"), password: fd.get("password") }),
+  });
+  const errEl = document.getElementById("signup-error");
+  if (!r.ok) {
+    errEl.textContent = "Sign-up failed: " + (r.body?.error || r.status);
+    errEl.classList.add("error-text");
+    return;
+  }
+  errEl.textContent = "";
+  await refreshMe();
+  location.hash = "#/hosts";
+});
+
+document.getElementById("logout").addEventListener("click", async (e) => {
+  e.preventDefault();
+  await api("/api/auth/logout", { method: "POST" });
+  await refreshMe();
+  location.hash = "#/";
+});
+
+// ---- my hosts ----
+
+async function loadHosts() {
+  const r = await api("/api/me/hosts");
+  const tbody = document.querySelector("#hosts-table tbody");
+  tbody.innerHTML = "";
+  if (!r.ok) return;
+  for (const h of r.body.hosts || []) {
+    const tr = document.createElement("tr");
+    const lastSeen = h.last_seen_at ? new Date(h.last_seen_at).toLocaleString() : "—";
+    tr.innerHTML = `
+      <td><code>${h.id}</code></td>
+      <td><input class="label-input" data-id="${h.id}" value="${h.label || ""}" /></td>
+      <td>${lastSeen}</td>
+      <td>
+        <button class="connect-host" data-id="${h.id}">Connect</button>
+        <button class="danger del-host" data-id="${h.id}">Remove</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll(".label-input").forEach((el) =>
+    el.addEventListener("change", async (e) => {
+      await api(`/api/me/hosts/${e.target.dataset.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ label: e.target.value }),
+      });
+    }),
+  );
+  tbody.querySelectorAll(".del-host").forEach((el) =>
+    el.addEventListener("click", async (e) => {
+      if (!confirm("Remove this host from your account?")) return;
+      await api(`/api/me/hosts/${e.target.dataset.id}`, { method: "DELETE" });
+      loadHosts();
+    }),
+  );
+  tbody.querySelectorAll(".connect-host").forEach((el) =>
+    el.addEventListener("click", (e) => {
+      idInput.value = e.target.dataset.id;
+      location.hash = "#/";
+      pinInput.focus();
+    }),
+  );
+}
+
+// ---- admin ----
+
+async function loadAdmin() {
+  const r = await api("/api/admin/users");
+  const tbody = document.querySelector("#users-table tbody");
+  tbody.innerHTML = "";
+  if (!r.ok) return;
+  for (const u of r.body.users || []) {
+    const tr = document.createElement("tr");
+    const status = u.is_banned ? "<span class='status error'>banned</span>"
+      : u.is_admin ? "<span class='status warn'>admin</span>"
+      : "<span class='status ok'>active</span>";
+    tr.innerHTML = `
+      <td>${u.id}</td>
+      <td>${u.email}</td>
+      <td>${u.host_count}</td>
+      <td>${u.active_sessions}</td>
+      <td>${status}</td>
+      <td>
+        ${u.is_banned
+          ? `<button class="unban" data-id="${u.id}">Unban</button>`
+          : `<button class="danger ban" data-id="${u.id}">Ban</button>`}
+        ${u.is_admin
+          ? `<button class="demote" data-id="${u.id}">Demote</button>`
+          : `<button class="promote" data-id="${u.id}">Promote</button>`}
+        <button class="danger del-user" data-id="${u.id}">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+  const adminAction = (selector, path) => {
+    tbody.querySelectorAll(selector).forEach((el) =>
+      el.addEventListener("click", async (e) => {
+        await api(`/api/admin/users/${e.target.dataset.id}${path}`, { method: "POST" });
+        loadAdmin();
+      }),
+    );
+  };
+  adminAction(".ban", "/ban");
+  adminAction(".unban", "/unban");
+  adminAction(".promote", "/promote");
+  adminAction(".demote", "/demote");
+  tbody.querySelectorAll(".del-user").forEach((el) =>
+    el.addEventListener("click", async (e) => {
+      if (!confirm("Delete this user permanently?")) return;
+      await api(`/api/admin/users/${e.target.dataset.id}`, { method: "DELETE" });
+      loadAdmin();
+    }),
+  );
+}
+
+// ---- pairing + WebRTC ----
 
 async function fetchIceServers() {
   try {
@@ -70,7 +276,13 @@ async function startSession() {
   setStatus("connecting…", "warn");
 
   const iceServers = await fetchIceServers();
-  pc = new RTCPeerConnection({ iceServers });
+  const params = new URLSearchParams(location.search);
+  const rtcConfig = { iceServers };
+  if (params.get("relay") === "1") {
+    rtcConfig.iceTransportPolicy = "relay";
+    info.textContent = "relay-only mode";
+  }
+  pc = new RTCPeerConnection(rtcConfig);
 
   pc.ontrack = (ev) => {
     if (ev.track.kind === "video") {
@@ -93,9 +305,10 @@ async function startSession() {
   };
 
   pc.onconnectionstatechange = () => {
-    info.textContent = "rtc: " + pc.connectionState;
-    if (pc.connectionState === "failed" || pc.connectionState === "disconnected") {
-      setStatus("rtc " + pc.connectionState, "error");
+    const s = pc.connectionState;
+    info.textContent = "rtc: " + s + (rtcConfig.iceTransportPolicy === "relay" ? " (relay-only)" : "");
+    if (s === "failed" || s === "disconnected") {
+      setStatus("rtc " + s, "error");
     }
   };
 
@@ -115,12 +328,13 @@ async function startSession() {
         showSession(true);
         attachInputForwarding();
         break;
-      case "offer":
+      case "offer": {
         await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         wsSend({ type: "answer", sdp: answer.sdp });
         break;
+      }
       case "candidate":
         try {
           await pc.addIceCandidate(msg.candidate);
@@ -145,17 +359,15 @@ async function startSession() {
 }
 
 function teardown() {
-  if (inputChan) { try { inputChan.close(); } catch {} inputChan = null; }
-  if (pc) { try { pc.close(); } catch {} pc = null; }
-  if (ws) { try { ws.close(); } catch {} ws = null; }
+  if (inputChan) { try { inputChan.close(); } catch { /* ignore */ } inputChan = null; }
+  if (pc) { try { pc.close(); } catch { /* ignore */ } pc = null; }
+  if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
   video.srcObject = null;
   showSession(false);
 }
 
 function attachInputForwarding() {
-  function rect() {
-    return video.getBoundingClientRect();
-  }
+  function rect() { return video.getBoundingClientRect(); }
   function normCoords(ev) {
     const r = rect();
     if (!r.width || !r.height || !video.videoWidth) return null;
@@ -166,7 +378,7 @@ function attachInputForwarding() {
   }
   function send(obj) {
     if (inputChan && inputChan.readyState === "open") {
-      try { inputChan.send(JSON.stringify(obj)); } catch {}
+      try { inputChan.send(JSON.stringify(obj)); } catch { /* ignore */ }
     }
   }
 
@@ -190,7 +402,6 @@ function attachInputForwarding() {
     send({ kind: "wheel", dx: e.deltaX, dy: e.deltaY });
   }, { passive: false });
 
-  // Keyboard: focus must be on .stage container.
   stage.addEventListener("keydown", (e) => {
     e.preventDefault();
     send({ kind: "key-down", key: e.key, code: e.code });
@@ -199,7 +410,6 @@ function attachInputForwarding() {
     e.preventDefault();
     send({ kind: "key-up", key: e.key, code: e.code });
   });
-  // Auto-focus the stage so keyboard works immediately.
   stage.focus();
 }
 
@@ -213,7 +423,6 @@ fullscreenBtn.addEventListener("click", () => {
   }
 });
 
-// Allow Enter to submit.
 for (const el of [idInput, pinInput]) {
   el.addEventListener("keydown", (e) => {
     if (e.key === "Enter") startSession();
@@ -221,3 +430,9 @@ for (const el of [idInput, pinInput]) {
 }
 
 setStatus("disconnected");
+
+// boot
+(async () => {
+  await refreshMe();
+  navigate();
+})();
