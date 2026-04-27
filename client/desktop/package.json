@@ -4,6 +4,10 @@
   "version": "0.2.0",
   "private": true,
   "description": "RemoteDesk desktop client (Windows / macOS / Linux)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/asscol/RDPnew.git"
+  },
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
@@ -22,6 +26,7 @@
   "build": {
     "appId": "ai.devin.remotedesk.client",
     "productName": "RemoteDesk",
+    "publish": null,
     "files": [
       "main.js",
       "preload.js",
