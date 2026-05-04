@@ -55,6 +55,15 @@ function pageId(route) {
   return PAGES[route] || PAGES["/"];
 }
 
+// HTML-escape a string for safe interpolation into innerHTML or attribute
+// values. Server-supplied fields (email, label, id) may contain markup
+// metacharacters; this prevents stored XSS in the admin and hosts tables.
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
+}
+
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     credentials: "same-origin",
@@ -155,13 +164,14 @@ async function loadHosts() {
   for (const h of r.body.hosts || []) {
     const tr = document.createElement("tr");
     const lastSeen = h.last_seen_at ? new Date(h.last_seen_at).toLocaleString() : "—";
+    const id = esc(h.id);
     tr.innerHTML = `
-      <td><code>${h.id}</code></td>
-      <td><input class="label-input" data-id="${h.id}" value="${h.label || ""}" /></td>
-      <td>${lastSeen}</td>
+      <td><code>${id}</code></td>
+      <td><input class="label-input" data-id="${id}" value="${esc(h.label || "")}" /></td>
+      <td>${esc(lastSeen)}</td>
       <td>
-        <button class="connect-host" data-id="${h.id}">Connect</button>
-        <button class="danger del-host" data-id="${h.id}">Remove</button>
+        <button class="connect-host" data-id="${id}">Connect</button>
+        <button class="danger del-host" data-id="${id}">Remove</button>
       </td>
     `;
     tbody.appendChild(tr);
@@ -202,20 +212,21 @@ async function loadAdmin() {
     const status = u.is_banned ? "<span class='status error'>banned</span>"
       : u.is_admin ? "<span class='status warn'>admin</span>"
       : "<span class='status ok'>active</span>";
+    const uid = esc(u.id);
     tr.innerHTML = `
-      <td>${u.id}</td>
-      <td>${u.email}</td>
-      <td>${u.host_count}</td>
-      <td>${u.active_sessions}</td>
+      <td>${uid}</td>
+      <td>${esc(u.email)}</td>
+      <td>${esc(u.host_count)}</td>
+      <td>${esc(u.active_sessions)}</td>
       <td>${status}</td>
       <td>
         ${u.is_banned
-          ? `<button class="unban" data-id="${u.id}">Unban</button>`
-          : `<button class="danger ban" data-id="${u.id}">Ban</button>`}
+          ? `<button class="unban" data-id="${uid}">Unban</button>`
+          : `<button class="danger ban" data-id="${uid}">Ban</button>`}
         ${u.is_admin
-          ? `<button class="demote" data-id="${u.id}">Demote</button>`
-          : `<button class="promote" data-id="${u.id}">Promote</button>`}
-        <button class="danger del-user" data-id="${u.id}">Delete</button>
+          ? `<button class="demote" data-id="${uid}">Demote</button>`
+          : `<button class="promote" data-id="${uid}">Promote</button>`}
+        <button class="danger del-user" data-id="${uid}">Delete</button>
       </td>
     `;
     tbody.appendChild(tr);

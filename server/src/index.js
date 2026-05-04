@@ -210,7 +210,6 @@ wss.on("connection", (ws) => {
           return;
         }
         if (
-          entry.pin.length !== pin.length ||
           !crypto.timingSafeEqual(
             Buffer.from(entry.pin.padEnd(12, "\0")),
             Buffer.from(pin.padEnd(12, "\0")),
