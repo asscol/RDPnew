@@ -32,6 +32,7 @@ let currentUser = null;
 let ws = null;
 let pc = null;
 let inputChan = null;
+let inputAbort = null;
 
 function setStatus(text, cls = "") {
   statusEl.textContent = text;
@@ -61,7 +62,7 @@ function pageId(route) {
 function esc(s) {
   const d = document.createElement("div");
   d.textContent = s == null ? "" : String(s);
-  return d.innerHTML;
+  return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 async function api(path, opts = {}) {
@@ -370,6 +371,7 @@ async function startSession() {
 }
 
 function teardown() {
+  if (inputAbort) { try { inputAbort.abort(); } catch { /* ignore */ } inputAbort = null; }
   if (inputChan) { try { inputChan.close(); } catch { /* ignore */ } inputChan = null; }
   if (pc) { try { pc.close(); } catch { /* ignore */ } pc = null; }
   if (ws) { try { ws.close(); } catch { /* ignore */ } ws = null; }
@@ -378,6 +380,13 @@ function teardown() {
 }
 
 function attachInputForwarding() {
+  // teardown() aborts this controller, removing every listener attached
+  // here. Without this, repeated connect/disconnect cycles stack listeners
+  // and each input event fires N times after N reconnects.
+  if (inputAbort) { try { inputAbort.abort(); } catch { /* ignore */ } }
+  inputAbort = new AbortController();
+  const signal = inputAbort.signal;
+
   function rect() { return video.getBoundingClientRect(); }
   function normCoords(ev) {
     const r = rect();
@@ -396,31 +405,31 @@ function attachInputForwarding() {
   video.addEventListener("mousemove", (e) => {
     const c = normCoords(e);
     if (c) send({ kind: "mouse-move", x: c.x, y: c.y });
-  });
+  }, { signal });
   video.addEventListener("mousedown", (e) => {
     const c = normCoords(e); if (!c) return;
     e.preventDefault();
     send({ kind: "mouse-down", button: e.button, x: c.x, y: c.y });
-  });
+  }, { signal });
   video.addEventListener("mouseup", (e) => {
     const c = normCoords(e); if (!c) return;
     e.preventDefault();
     send({ kind: "mouse-up", button: e.button, x: c.x, y: c.y });
-  });
-  video.addEventListener("contextmenu", (e) => e.preventDefault());
+  }, { signal });
+  video.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
   video.addEventListener("wheel", (e) => {
     e.preventDefault();
     send({ kind: "wheel", dx: e.deltaX, dy: e.deltaY });
-  }, { passive: false });
+  }, { passive: false, signal });
 
   stage.addEventListener("keydown", (e) => {
     e.preventDefault();
     send({ kind: "key-down", key: e.key, code: e.code });
-  });
+  }, { signal });
   stage.addEventListener("keyup", (e) => {
     e.preventDefault();
     send({ kind: "key-up", key: e.key, code: e.code });
-  });
+  }, { signal });
   stage.focus();
 }
 

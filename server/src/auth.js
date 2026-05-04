@@ -39,13 +39,21 @@ export async function registerUser({ email, password, now = Date.now() }) {
     .get(email.toLowerCase());
   if (existing) return { error: "email-taken" };
   const passwordHash = await hashPassword(password);
-  const info = db
-    .prepare(
-      `INSERT INTO users (email, password_hash, is_admin, is_banned, created_at)
-       VALUES (?, ?, 0, 0, ?)`,
-    )
-    .run(email.toLowerCase(), passwordHash, now);
-  return { userId: info.lastInsertRowid };
+  // Two concurrent registrations can both pass the SELECT above before
+  // either INSERTs. Catch the UNIQUE-constraint violation and surface it
+  // as a clean email-taken instead of a 500.
+  try {
+    const info = db
+      .prepare(
+        `INSERT INTO users (email, password_hash, is_admin, is_banned, created_at)
+         VALUES (?, ?, 0, 0, ?)`,
+      )
+      .run(email.toLowerCase(), passwordHash, now);
+    return { userId: info.lastInsertRowid };
+  } catch (err) {
+    if (err && err.code === "SQLITE_CONSTRAINT_UNIQUE") return { error: "email-taken" };
+    throw err;
+  }
 }
 
 export async function authenticateUser({ email, password }) {
