@@ -74,6 +74,48 @@ button.danger { background: #6e2222; border-color: #8a2a2a; }
 button.danger:hover { background: #8a2a2a; }
 
 .hint { color: #8b949e; font-size: 0.85rem; margin: 0.75rem 0 0; }
+.error-text { color: #ffa0a0; }
+
+nav { display: flex; gap: 0.75rem; align-items: center; }
+nav a {
+  color: #8b949e;
+  text-decoration: none;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+}
+nav a:hover { background: #21262d; color: #e6edf3; }
+
+.stack { display: flex; flex-direction: column; gap: 0.75rem; max-width: 24rem; }
+
+.data-table { width: 100%; border-collapse: collapse; margin-top: 0.75rem; }
+.data-table th,
+.data-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #30363d;
+  text-align: left;
+  font-size: 0.9rem;
+}
+.data-table th { color: #8b949e; font-weight: 600; }
+.data-table code { color: #e6edf3; font-family: ui-monospace, monospace; }
+.data-table .label-input {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.25rem 0.5rem;
+  color: #e6edf3;
+  font-size: 0.9rem;
+  letter-spacing: normal;
+  min-width: 0;
+}
+.data-table .label-input:focus {
+  border-color: #30363d;
+  background: #0d1117;
+}
+.data-table button {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  margin-right: 0.25rem;
+}
 
 .toolbar {
   display: flex;

@@ -9,37 +9,95 @@
   <body>
     <header>
       <h1>RemoteDesk</h1>
+      <nav id="nav">
+        <a href="#/" data-route="/">Connect</a>
+        <a href="#/login" data-route="/login" class="auth-only-out">Sign in</a>
+        <a href="#/signup" data-route="/signup" class="auth-only-out">Sign up</a>
+        <a href="#/hosts" data-route="/hosts" class="auth-only-in hidden">My hosts</a>
+        <a href="#/admin" data-route="/admin" class="admin-only hidden">Admin</a>
+        <a href="#" id="logout" class="auth-only-in hidden">Sign out</a>
+      </nav>
       <span id="status" class="status">disconnected</span>
     </header>
 
-    <section id="login" class="panel">
-      <div class="row">
-        <label>
-          Connection&nbsp;ID
-          <input id="id" inputmode="numeric" maxlength="9" placeholder="123456789" autocomplete="off" />
-        </label>
-        <label>
-          PIN
-          <input id="pin" inputmode="numeric" maxlength="12" placeholder="0000" autocomplete="off" />
-        </label>
-        <button id="connect">Connect</button>
-      </div>
-      <p class="hint">
-        Run the host agent on the computer you want to control. It will print
-        a Connection ID and ask you to set a PIN.
-      </p>
-    </section>
+    <main>
+      <!-- Connect (default) -->
+      <section id="login" class="panel">
+        <div class="row">
+          <label>
+            Connection&nbsp;ID
+            <input id="id" inputmode="numeric" maxlength="9" placeholder="123456789" autocomplete="off" />
+          </label>
+          <label>
+            PIN
+            <input id="pin" inputmode="numeric" maxlength="12" placeholder="0000" autocomplete="off" />
+          </label>
+          <button id="connect">Connect</button>
+        </div>
+        <p class="hint">
+          Run the host agent on the computer you want to control. It will print
+          a Connection ID and you'll set a PIN. Sign in to save hosts to your
+          address book.
+        </p>
+      </section>
 
-    <section id="session" class="panel hidden">
-      <div class="toolbar">
-        <button id="fullscreen">Fullscreen</button>
-        <button id="disconnect" class="danger">Disconnect</button>
-        <span id="info" class="info"></span>
-      </div>
-      <div id="stage" class="stage" tabindex="0">
-        <video id="screen" autoplay playsinline muted></video>
-      </div>
-    </section>
+      <!-- Sign in -->
+      <section id="page-login" class="panel hidden">
+        <h2>Sign in</h2>
+        <form id="form-login" class="stack">
+          <label>Email <input type="email" name="email" required /></label>
+          <label>Password <input type="password" name="password" required minlength="8" /></label>
+          <button type="submit">Sign in</button>
+          <p class="hint" id="login-error"></p>
+        </form>
+      </section>
+
+      <!-- Sign up -->
+      <section id="page-signup" class="panel hidden">
+        <h2>Create account</h2>
+        <form id="form-signup" class="stack">
+          <label>Email <input type="email" name="email" required /></label>
+          <label>Password <input type="password" name="password" required minlength="8" /></label>
+          <button type="submit">Create account</button>
+          <p class="hint" id="signup-error"></p>
+        </form>
+      </section>
+
+      <!-- My hosts -->
+      <section id="page-hosts" class="panel hidden">
+        <h2>My hosts</h2>
+        <p class="hint">Hosts you've linked to your account.</p>
+        <table id="hosts-table" class="data-table">
+          <thead>
+            <tr><th>ID</th><th>Label</th><th>Last seen</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- Admin -->
+      <section id="page-admin" class="panel hidden">
+        <h2>Admin — Users</h2>
+        <table id="users-table" class="data-table">
+          <thead>
+            <tr><th>ID</th><th>Email</th><th>Hosts</th><th>Sessions</th><th>Status</th><th>Actions</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <!-- Session -->
+      <section id="session" class="panel hidden">
+        <div class="toolbar">
+          <button id="fullscreen">Fullscreen</button>
+          <button id="disconnect" class="danger">Disconnect</button>
+          <span id="info" class="info"></span>
+        </div>
+        <div id="stage" class="stage" tabindex="0">
+          <video id="screen" autoplay playsinline muted></video>
+        </div>
+      </section>
+    </main>
 
     <script type="module" src="app.js"></script>
   </body>

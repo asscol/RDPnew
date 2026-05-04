@@ -22,8 +22,14 @@ services:
       - TURN_PORT=3478
       - TURN_SECRET=${TURN_SECRET}
       - TURN_TTL=3600
+      - DB_PATH=/app/data/remotedesk.sqlite
+      - SECURE_COOKIES=${SECURE_COOKIES:-0}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     ports:
       - "8080:8080"
+    volumes:
+      - remotedesk-data:/app/data
 
   coturn:
     image: coturn/coturn:4.6.2
@@ -35,3 +41,6 @@ services:
     command: ["-c", "/etc/coturn/turnserver.conf"]
     environment:
       - TURN_SECRET=${TURN_SECRET}
+
+volumes:
+  remotedesk-data:

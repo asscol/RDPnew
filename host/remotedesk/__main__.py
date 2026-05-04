@@ -10,6 +10,7 @@ import secrets
 import sys
 
 from .agent import run_agent
+from .identity import default_identity_path, reset_identity
 
 
 def _default_pin() -> str:
@@ -59,9 +60,34 @@ def main(argv: list[str] | None = None) -> int:
         help="Override ICE servers (e.g. stun:stun.l.google.com:19302). Can repeat. "
         "By default the host fetches the list from the signaling server.",
     )
+    parser.add_argument(
+        "--reset-id",
+        action="store_true",
+        help="Forget the saved Connection ID and request a fresh one on startup",
+    )
+    parser.add_argument(
+        "--show-id",
+        action="store_true",
+        help="Print the saved Connection ID (if any) and exit",
+    )
     parser.add_argument("-v", "--verbose", action="count", default=0)
 
     args = parser.parse_args(argv)
+
+    if args.show_id:
+        from .identity import load_identity
+
+        ident = load_identity()
+        if ident is None:
+            print(f"No saved identity at {default_identity_path()}")
+            return 1
+        print(f"Connection ID: {ident.id}")
+        print(f"Stored at: {default_identity_path()}")
+        return 0
+
+    if args.reset_id:
+        removed = reset_identity()
+        print("Identity removed." if removed else f"No identity file at {default_identity_path()}.")
 
     level = logging.WARNING
     if args.verbose == 1:

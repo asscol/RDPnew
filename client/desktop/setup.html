@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RemoteDesk — Setup</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: #0e1116;
+        color: #e6edf3;
+        padding: 1.25rem 1.5rem;
+      }
+      h1 { font-size: 1.05rem; margin: 0 0 0.5rem; }
+      p { color: #8b949e; font-size: 0.85rem; margin: 0 0 1rem; }
+      label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 0.5rem; }
+      input {
+        width: 100%;
+        padding: 0.5rem 0.6rem;
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        color: #e6edf3;
+        font-size: 0.95rem;
+        box-sizing: border-box;
+      }
+      .actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+      button {
+        padding: 0.5rem 0.9rem;
+        background: #21262d;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        color: #e6edf3;
+        cursor: pointer;
+      }
+      button.primary { background: #1f6feb; border-color: #1f6feb; }
+      .err { color: #ffa0a0; font-size: 0.8rem; margin-top: 0.5rem; min-height: 1em; }
+    </style>
+  </head>
+  <body>
+    <h1>RemoteDesk server</h1>
+    <p>Enter the URL of your RemoteDesk signaling server (e.g. <code>https://remote.example.com/</code>).</p>
+    <label for="url">Server URL</label>
+    <input id="url" type="url" placeholder="https://remote.example.com/" autofocus />
+    <div class="err" id="err"></div>
+    <div class="actions">
+      <button id="cancel">Cancel</button>
+      <button id="save" class="primary">Save</button>
+    </div>
+    <script src="setup.js"></script>
+  </body>
+</html>
